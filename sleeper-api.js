@@ -161,15 +161,26 @@ async function getProjectionsRaw(season, week) {
   const cacheKey = `smt:proj:${season}:${week}`;
   const cached = cacheGet(cacheKey, 10 * 60 * 1000);
   if (cached) return cached;
-  const data = await fetchJSON(
-    `${SLEEPER_BASE}/projections/nfl/${season}/${week}?season_type=regular`
-  );
-  // Trim to the fields we actually use before caching, to keep localStorage small.
-  const trimmed = data
-    .filter((e) => e.player_id)
-    .map((e) => ({ player_id: String(e.player_id), team: e.team, stats: e.stats || {} }));
-  cacheSet(cacheKey, trimmed);
-  return trimmed;
+  try {
+    const data = await fetchJSON(
+      `${SLEEPER_BASE}/projections/nfl/${season}/${week}?season_type=regular`
+    );
+    // Trim to the fields we actually use before caching, to keep localStorage small.
+    const trimmed = data
+      .filter((e) => e.player_id)
+      .map((e) => ({ player_id: String(e.player_id), team: e.team, stats: e.stats || {} }));
+    cacheSet(cacheKey, trimmed);
+    return trimmed;
+  } catch (e) {
+    // This is a multi-MB payload fetched on every live poll, so a transient
+    // network hiccup here is expected occasionally - fall back to whatever
+    // we had cached (even if past its normal 10-minute freshness window)
+    // rather than wiping out every player's projection for this cycle. Only
+    // give up if we have nothing at all cached yet.
+    const stale = cacheGet(cacheKey);
+    if (stale) return stale;
+    throw e;
+  }
 }
 
 // ---- weekly actual box-score stats (for the per-player stat line under
@@ -185,10 +196,16 @@ async function getStatsRaw(season, week, { isFinal } = {}) {
     const cached = cacheGet(cacheKey, 60 * 1000); // short TTL while live
     if (cached) return cached;
   }
-  const data = await fetchJSON(`${SLEEPER_BASE}/stats/nfl/${season}/${week}?season_type=regular`);
-  const trimmed = data
-    .filter((e) => e.player_id)
-    .map((e) => ({ player_id: String(e.player_id), team: e.team, stats: e.stats || {} }));
-  cacheSet(cacheKey, trimmed);
-  return trimmed;
+  try {
+    const data = await fetchJSON(`${SLEEPER_BASE}/stats/nfl/${season}/${week}?season_type=regular`);
+    const trimmed = data
+      .filter((e) => e.player_id)
+      .map((e) => ({ player_id: String(e.player_id), team: e.team, stats: e.stats || {} }));
+    cacheSet(cacheKey, trimmed);
+    return trimmed;
+  } catch (e) {
+    const stale = cacheGet(cacheKey);
+    if (stale) return stale;
+    throw e;
+  }
 }

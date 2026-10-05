@@ -23,7 +23,16 @@ function computePointsFromStats(rawStats, scoringSettings) {
 function buildProjectionPointsMap(rawProjectionsList, scoringSettings) {
   const map = {};
   for (const entry of rawProjectionsList) {
-    map[entry.player_id] = computePointsFromStats(entry.stats, scoringSettings);
+    const stats = entry.stats || {};
+    // Sleeper always returns a row for every rostered player, but for
+    // someone with no real projection yet (most commonly: ruled out/inactive,
+    // or the week's projections just haven't been published for them) that
+    // row carries nothing but an ADP placeholder - no actual scoring
+    // categories. Map that to null ("no projection available") rather than
+    // a computed 0, so the UI can show it as unavailable instead of a
+    // literal (and misleading-looking) zero.
+    const hasRealProjection = Object.keys(stats).some((k) => k in scoringSettings);
+    map[entry.player_id] = hasRealProjection ? computePointsFromStats(stats, scoringSettings) : null;
   }
   return map;
 }

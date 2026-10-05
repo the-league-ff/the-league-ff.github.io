@@ -51,6 +51,55 @@ function setLeagueId(id) {
   localStorage.setItem('smt:leagueId', id);
 }
 
+// ---------------------------------------------------------- default week
+//
+// NFL weeks run Wednesday-to-Tuesday: a week's games finish by Monday
+// night, Tuesday is a recap/grace day, and the tracker's default view
+// should move forward to the next week starting that Wednesday. We compute
+// this straight from the calendar (days elapsed since the season's kickoff
+// Wednesday, in US Eastern time so every viewer gets the same answer
+// regardless of their own timezone) rather than from Sleeper's own
+// "current week" field, whose exact rollover day isn't guaranteed to line
+// up with that rule.
+
+// Midnight-UTC Date for a plain 'YYYY-MM-DD' calendar date (no timezone
+// shift - it's just a day, not a moment in time).
+function dateOnlyUTC(dateStr) {
+  return new Date(`${dateStr}T00:00:00Z`);
+}
+
+// Midnight-UTC Date representing the Eastern-timezone calendar day that
+// moment `d` falls on - lets us compare "today" the same way for every
+// viewer, in the league's own home timezone, instead of each viewer's local
+// day potentially being a day off (and so landing on the wrong side of the
+// Wednesday cutover) near midnight.
+function easternCalendarDateUTC(d) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year').value;
+  const m = parts.find((p) => p.type === 'month').value;
+  const day = parts.find((p) => p.type === 'day').value;
+  return dateOnlyUTC(`${y}-${m}-${day}`);
+}
+
+// The week to show by default, per the Wednesday-rollover rule above.
+// `seasonStartDate` is Sleeper's nflState.season_start_date (the season's
+// kickoff Wednesday); `now` is the real current time; `lastLeagueWeek`
+// clamps to the last playable week.
+function computeDefaultDisplayWeek(seasonStartDate, now, lastLeagueWeek) {
+  if (!seasonStartDate) return 1;
+  const start = dateOnlyUTC(seasonStartDate);
+  const today = easternCalendarDateUTC(now);
+  const daysSinceStart = Math.round((today - start) / 86400000);
+  if (daysSinceStart < 0) return 1;
+  const week = 1 + Math.floor(daysSinceStart / 7);
+  return Math.max(1, Math.min(week, lastLeagueWeek || week));
+}
+
 // The 1-seed's Boogie Bowl opponent preference, if someone has saved one.
 // Lives as a plain JSON file alongside index.html (no backend) - see
 // buildBoogieBowlPanel(). Missing file / bad JSON just means "not set yet."
@@ -114,14 +163,23 @@ async function loadLeagueMeta() {
   }
   state.rosterMeta = meta;
 
-  // Default week: current NFL week if this league's season matches, clamped
-  // to a playable week (regular season or playoffs - median logic just
-  // doesn't apply once playoffs start).
-  let defaultWeek = 1;
+  // state.currentStateWeek drives the "is this week final yet" checks used
+  // all over the app, so it stays exactly what Sleeper reports as the
+  // league's current week.
+  let currentStateWeek = 1;
   if (nflState && String(nflState.season) === String(league.season)) {
-    defaultWeek = nflState.week || 1;
+    currentStateWeek = nflState.week || 1;
   }
-  state.currentStateWeek = defaultWeek;
+  state.currentStateWeek = currentStateWeek;
+
+  // The week shown by default on load is a separate question - see
+  // computeDefaultDisplayWeek() above - so that it reliably advances every
+  // Wednesday regardless of exactly which day Sleeper itself rolls its own
+  // current-week field over.
+  let defaultWeek =
+    nflState && String(nflState.season) === String(league.season)
+      ? computeDefaultDisplayWeek(nflState.season_start_date, new Date(), state.lastLeagueWeek)
+      : 1;
   defaultWeek = Math.max(1, Math.min(defaultWeek, state.lastLeagueWeek));
   state.selectedWeek = defaultWeek;
 
@@ -896,7 +954,8 @@ function buildPlayerCell(pid, side, entry) {
   }
   const p = state.weekData.players[pid] || {};
   const bigScore = (entry && entry.players_points && entry.players_points[pid]) || 0;
-  const projScore = state.weekData.projectionPointsMap[pid] || 0;
+  const rawProj = state.weekData.projectionPointsMap[pid];
+  const projScore = rawProj == null ? null : rawProj; // null = no projection available (e.g. ruled out)
 
   const topline = document.createElement('div');
   topline.className = 'player-topline';
@@ -905,9 +964,9 @@ function buildPlayerCell(pid, side, entry) {
   nameEl.textContent = playerName(pid);
   const scoreBlock = document.createElement('div');
   scoreBlock.className = 'player-scoreblock';
-  scoreBlock.innerHTML = `<div class="player-score">${fmtPts(bigScore)}</div><div class="player-proj">${fmtPts(
-    projScore
-  )}</div>`;
+  scoreBlock.innerHTML = `<div class="player-score">${fmtPts(bigScore)}</div><div class="player-proj">${
+    projScore == null ? '—' : fmtPts(projScore)
+  }</div>`;
   if (side === 'left') {
     topline.appendChild(nameEl);
     topline.appendChild(scoreBlock);
