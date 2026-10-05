@@ -134,11 +134,20 @@ async function loadLeagueMeta() {
   state.season = league.season;
   state.playoffWeekStart = (league.settings && league.settings.playoff_week_start) || 14;
   // Playoffs run 4 weeks: Boogie Bowl (wk 14), Round 1 (wk 14-15, 2-week
-  // aggregate), Championship + 3rd place (wk 16-17, 2-week aggregate).
-  // last_scored_leg (when present) confirms the season's final week; fall
-  // back to playoffWeekStart + 3 for a standard 4-week playoff bracket.
-  state.lastLeagueWeek =
-    (league.settings && league.settings.last_scored_leg) || state.playoffWeekStart + 3;
+  // aggregate), Championship + 3rd place (wk 16-17, 2-week aggregate) - this
+  // league's own fixed format, so the season's last playable week is always
+  // playoffWeekStart + 3.
+  //
+  // NOTE: this used to fall back to league.settings.last_scored_leg "when
+  // present", on the assumption it would confirm the season's final week.
+  // It doesn't - Sleeper updates last_scored_leg live, to the most recent
+  // week that's fully final (e.g. 3 while week 4 is still being played), so
+  // using it here clamped the default week (and the playoff week range)
+  // down to whatever week just finished, every single week of the season.
+  // That was the real cause of the tracker always showing last week's
+  // scores by default. last_scored_leg is a "how far has scoring caught
+  // up" signal, not a "how long is this season" one - don't use it here.
+  state.lastLeagueWeek = state.playoffWeekStart + 3;
 
   const { medianRoster, realRosters } = splitRosters(rosters);
   state.medianRoster = medianRoster;
